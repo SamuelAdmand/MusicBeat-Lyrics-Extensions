@@ -16,7 +16,7 @@ module.exports = {
       });
       if (proxyRes.ok) {
         var text = proxyRes.text();
-        if (text && text.trim() && !text.startsWith("{") && !text.startsWith("<")) {
+        if (text && text.trim() && !text.startsWith("{") && !text.startsWith("<") && !isFakeLyrics(text)) {
           return text.trim();
         }
       }
@@ -25,11 +25,11 @@ module.exports = {
     // 2. Desktop API fallback
     try {
       var token = await getToken();
-      if (token) {
+      if (token && !token.startsWith("00000000")) {
         var url = "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get?format=json" +
                   "&q_track=" + encodeURIComponent(title) +
                   "&q_artist=" + encodeURIComponent(artist) +
-                  "&f_subtitle_length=" + durationSec +
+                  (durationSec > 0 ? ("&f_subtitle_length=" + durationSec) : "") +
                   "&usertoken=" + encodeURIComponent(token) +
                   "&app_id=web-desktop-app-v1.0";
 
@@ -42,7 +42,7 @@ module.exports = {
             var subBody = sub && sub.message && sub.message.body && sub.message.body.subtitle_list;
             if (Array.isArray(subBody) && subBody.length > 0) {
               var subtitle = subBody[0] && subBody[0].subtitle;
-              if (subtitle && subtitle.subtitle_body) {
+              if (subtitle && subtitle.subtitle_body && !isFakeLyrics(subtitle.subtitle_body)) {
                 return subtitle.subtitle_body;
               }
             }
@@ -52,8 +52,32 @@ module.exports = {
     } catch (e) {}
 
     return null;
+  },
+
+  searchLyrics: async function(query) {
+    var lrc = await module.exports.getLyrics(query);
+    if (!lrc) return [];
+    return [{
+      id: "musixmatch_" + encodeURIComponent((query.title || "").trim()),
+      title: query.title || "",
+      artist: query.artist || "",
+      album: query.album || "",
+      durationSeconds: Math.floor((query.durationMs || 0) / 1000),
+      provider: "Musixmatch",
+      syncedLyrics: lrc,
+      plainLyrics: null
+    }];
   }
 };
+
+function isFakeLyrics(text) {
+  if (!text) return true;
+  // Musixmatch returns this exact honeypot / gibberish text when unauthenticated
+  if (text.indexOf("Wob gopini") !== -1 || text.indexOf("Tefe woxica") !== -1 || text.indexOf("Gogoh vudob") !== -1) {
+    return true;
+  }
+  return false;
+}
 
 var cachedToken = null;
 async function getToken() {
@@ -64,7 +88,7 @@ async function getToken() {
     if (!res.ok) return null;
     var data = res.json();
     var token = data && data.message && data.message.body && data.message.body.user_token;
-    if (token && token !== "Upgrade.Me") {
+    if (token && token !== "Upgrade.Me" && !token.startsWith("00000000")) {
       cachedToken = token;
       return token;
     }
